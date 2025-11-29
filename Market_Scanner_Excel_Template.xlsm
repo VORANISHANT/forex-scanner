@@ -1,0 +1,304 @@
+' Excel VBA Code for Live Market Scanner
+' This code should be added to a new Excel Workbook with Macros enabled (.xlsm)
+
+' MODULE 1: MarketDataAPI
+' ========================================
+
+Option Explicit
+
+Public Function GetMarketData(symbol As String, timeframe As String) As Variant
+    ' In production, this would call real APIs like:
+    ' - Twelve Data API
+    ' - Alpha Vantage
+    ' - Binance API for crypto
+    ' - MetaTrader 5 API
+    
+    ' For demo purposes, generating random signals
+    Dim signals As Variant
+    signals = Array("STRONG BUY", "BUY", "NEUTRAL", "SELL", "STRONG SELL")
+    
+    Dim randomIndex As Integer
+    randomIndex = Int((UBound(signals) - LBound(signals) + 1) * Rnd + LBound(signals))
+    
+    GetMarketData = signals(randomIndex)
+End Function
+
+Public Function GetPrice(symbol As String) As Double
+    ' Base prices for different symbols
+    Dim basePrice As Double
+    
+    Select Case Left(symbol, 3)
+        Case "EUR"
+            basePrice = 1.085 + (Rnd - 0.5) * 0.02
+        Case "GBP"
+            basePrice = 1.265 + (Rnd - 0.5) * 0.02
+        Case "USD"
+            If Right(symbol, 3) = "JPY" Then
+                basePrice = 149.5 + (Rnd - 0.5) * 2
+            Else
+                basePrice = 0.885 + (Rnd - 0.5) * 0.02
+            End If
+        Case "BTC"
+            basePrice = 44250 + (Rnd - 0.5) * 1000
+        Case "ETH"
+            basePrice = 2345 + (Rnd - 0.5) * 100
+        Case Else
+            basePrice = 1 + (Rnd - 0.5) * 0.02
+    End Select
+    
+    GetPrice = basePrice
+End Function
+
+Public Function GetPriceChange() As Double
+    GetPriceChange = (Rnd - 0.5) * 4 ' Random change between -2% and +2%
+End Function
+
+' MODULE 2: ScannerControl
+' ========================================
+
+Option Explicit
+
+Dim RefreshTimer As Date
+Dim AutoRefreshEnabled As Boolean
+
+Public Sub InitializeScanner()
+    ' Set up the scanner
+    AutoRefreshEnabled = True
+    
+    ' Format the worksheet
+    Call FormatScannerSheet
+    
+    ' Load initial data
+    Call RefreshAllData
+    
+    ' Start auto-refresh
+    Call StartAutoRefresh
+End Sub
+
+Public Sub FormatScannerSheet()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Scanner")
+    
+    With ws
+        ' Clear existing content
+        .Cells.Clear
+        
+        ' Set headers
+        .Range("A1").Value = "SYMBOL"
+        .Range("B1").Value = "PRICE"
+        .Range("C1").Value = "CHANGE"
+        .Range("D1").Value = "1M"
+        .Range("E1").Value = "5M"
+        .Range("F1").Value = "15M"
+        .Range("G1").Value = "1H"
+        .Range("H1").Value = "1D"
+        .Range("I1").Value = "SIGNAL"
+        .Range("J1").Value = "STRENGTH"
+        .Range("K1").Value = "ACTION"
+        
+        ' Format header row
+        With .Range("A1:K1")
+            .Font.Bold = True
+            .Font.Size = 12
+            .Interior.Color = RGB(19, 23, 34)
+            .Font.Color = RGB(209, 212, 220)
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+            .RowHeight = 30
+        End With
+        
+        ' Set column widths
+        .Columns("A:A").ColumnWidth = 12
+        .Columns("B:B").ColumnWidth = 12
+        .Columns("C:C").ColumnWidth = 10
+        .Columns("D:H").ColumnWidth = 15
+        .Columns("I:I").ColumnWidth = 15
+        .Columns("J:J").ColumnWidth = 12
+        .Columns("K:K").ColumnWidth = 15
+        
+        ' Background color
+        .Cells.Interior.Color = RGB(30, 34, 45)
+        .Cells.Font.Color = RGB(209, 212, 220)
+    End With
+End Sub
+
+Public Sub RefreshAllData()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Scanner")
+    
+    ' Define symbols
+    Dim symbols As Variant
+    symbols = Array( _
+        "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", _
+        "NZDUSD", "EURJPY", "EURGBP", "EURCAD", "EURAUD", _
+        "GBPJPY", "GBPAUD", "GBPCAD", "CADJPY", "AUDJPY", _
+        "BTCUSD", "ETHUSD", "BTCEUR", "ETHEUR" _
+    )
+    
+    Dim timeframes As Variant
+    timeframes = Array("1M", "5M", "15M", "1H", "1D")
+    
+    Dim row As Integer
+    row = 2
+    
+    ' Loop through symbols
+    Dim symbol As Variant
+    For Each symbol In symbols
+        ' Symbol
+        ws.Cells(row, 1).Value = symbol
+        
+        ' Price
+        Dim price As Double
+        price = GetPrice(CStr(symbol))
+        ws.Cells(row, 2).Value = Format(price, "#,##0.00000")
+        
+        ' Change
+        Dim change As Double
+        change = GetPriceChange()
+        ws.Cells(row, 3).Value = Format(change, "0.00") & "%"
+        
+        ' Color code the change
+        If change > 0 Then
+            ws.Cells(row, 3).Font.Color = RGB(8, 153, 129) ' Green
+        ElseIf change < 0 Then
+            ws.Cells(row, 3).Font.Color = RGB(242, 54, 69) ' Red
+        End If
+        
+        ' Timeframe signals
+        Dim col As Integer
+        col = 4
+        Dim tf As Variant
+        For Each tf In timeframes
+            Dim signal As String
+            signal = GetMarketData(CStr(symbol), CStr(tf))
+            ws.Cells(row, col).Value = signal
+            
+            ' Color code the signal
+            Call ColorCodeSignal(ws.Cells(row, col), signal)
+            
+            col = col + 1
+        Next tf
+        
+        ' Overall signal (based on majority)
+        Dim overallSignal As String
+        overallSignal = CalculateOverallSignal(row, ws)
+        ws.Cells(row, 9).Value = overallSignal
+        Call ColorCodeSignal(ws.Cells(row, 9), overallSignal)
+        
+        ' Strength
+        Dim strength As Integer
+        strength = CalculateStrength(overallSignal)
+        ws.Cells(row, 10).Value = String(strength, "●") & String(5 - strength, "○")
+        
+        ' Action
+        Dim action As String
+        If InStr(overallSignal, "BUY") > 0 Then
+            action = "BUY"
+        ElseIf InStr(overallSignal, "SELL") > 0 Then
+            action = "SELL"
+        Else
+            action = "HOLD"
+        End If
+        ws.Cells(row, 11).Value = action
+        Call ColorCodeSignal(ws.Cells(row, 11), action)
+        
+        row = row + 1
+    Next symbol
+    
+    ' Update timestamp
+    ws.Range("M1").Value = "Last Update:"
+    ws.Range("N1").Value = Now()
+    ws.Range("N1").NumberFormat = "hh:mm:ss"
+    
+    Application.ScreenUpdating = True
+End Sub
+
+Private Sub ColorCodeSignal(cell As Range, signal As String)
+    Select Case signal
+        Case "STRONG BUY", "BUY"
+            cell.Interior.Color = RGB(8, 153, 129)
+            cell.Font.Color = RGB(255, 255, 255)
+        Case "STRONG SELL", "SELL"
+            cell.Interior.Color = RGB(242, 54, 69)
+            cell.Font.Color = RGB(255, 255, 255)
+        Case "NEUTRAL", "HOLD"
+            cell.Interior.Color = RGB(128, 128, 128)
+            cell.Font.Color = RGB(255, 255, 255)
+    End Select
+    
+    cell.HorizontalAlignment = xlCenter
+    cell.VerticalAlignment = xlCenter
+    cell.Font.Bold = True
+End Sub
+
+Private Function CalculateOverallSignal(row As Integer, ws As Worksheet) As String
+    Dim buyCount As Integer
+    Dim sellCount As Integer
+    Dim col As Integer
+    
+    For col = 4 To 8
+        Dim sig As String
+        sig = ws.Cells(row, col).Value
+        
+        If InStr(sig, "BUY") > 0 Then
+            buyCount = buyCount + 1
+            If InStr(sig, "STRONG") > 0 Then buyCount = buyCount + 1
+        ElseIf InStr(sig, "SELL") > 0 Then
+            sellCount = sellCount + 1
+            If InStr(sig, "STRONG") > 0 Then sellCount = sellCount + 1
+        End If
+    Next col
+    
+    If buyCount >= 7 Then
+        CalculateOverallSignal = "STRONG BUY"
+    ElseIf buyCount >= 4 Then
+        CalculateOverallSignal = "BUY"
+    ElseIf sellCount >= 7 Then
+        CalculateOverallSignal = "STRONG SELL"
+    ElseIf sellCount >= 4 Then
+        CalculateOverallSignal = "SELL"
+    Else
+        CalculateOverallSignal = "NEUTRAL"
+    End If
+End Function
+
+Private Function CalculateStrength(signal As String) As Integer
+    Select Case signal
+        Case "STRONG BUY", "STRONG SELL"
+            CalculateStrength = 5
+        Case "BUY", "SELL"
+            CalculateStrength = 3
+        Case Else
+            CalculateStrength = 1
+    End Select
+End Function
+
+Public Sub StartAutoRefresh()
+    AutoRefreshEnabled = True
+    RefreshTimer = Now + TimeValue("00:00:05")
+    Application.OnTime RefreshTimer, "RefreshAllData"
+End Sub
+
+Public Sub StopAutoRefresh()
+    AutoRefreshEnabled = False
+    On Error Resume Next
+    Application.OnTime RefreshTimer, "RefreshAllData", , False
+    On Error GoTo 0
+End Sub
+
+' MODULE 3: Buttons (Add to worksheet)
+' ========================================
+
+Sub btnRefresh_Click()
+    Call RefreshAllData
+End Sub
+
+Sub btnStartAutoRefresh_Click()
+    Call StartAutoRefresh
+    MsgBox "Auto-refresh started (every 5 seconds)", vbInformation
+End Sub
+
+Sub btnStopAutoRefresh_Click()
+    Call StopAutoRefresh
+    MsgBox "Auto-refresh stopped", vbInformation
+End Sub
